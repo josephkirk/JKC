@@ -138,7 +138,8 @@ export const Inspector: React.FC = () => {
           }}
         >
           <img
-            src={getThumbnailUrl(activeMedia.id)}
+            key={`${activeMedia.id}-${activeMedia.sizeBytes}-${activeMedia.modifiedMs}`}
+            src={getThumbnailUrl(activeMedia.id, `${activeMedia.sizeBytes}-${activeMedia.modifiedMs}`)}
             alt={activeMedia.name}
             style={{ width: "100%", height: "100%", objectFit: "contain" }}
             onError={(e) => {

@@ -23,12 +23,14 @@ function assetOrigin(): string {
   return "http://jkc-asset.localhost";
 }
 
-export function getMediaAssetUrl(mediaId: string): string {
-  return `${assetOrigin()}/media/${encodeURIComponent(mediaId)}`;
+export function getMediaAssetUrl(mediaId: string, version?: string | number): string {
+  const query = version !== undefined && version !== null ? `?v=${encodeURIComponent(String(version))}` : "";
+  return `${assetOrigin()}/media/${encodeURIComponent(mediaId)}${query}`;
 }
 
-export function getThumbnailUrl(mediaId: string): string {
-  return `${assetOrigin()}/thumb/${encodeURIComponent(mediaId)}`;
+export function getThumbnailUrl(mediaId: string, version?: string | number): string {
+  const query = version !== undefined && version !== null ? `?v=${encodeURIComponent(String(version))}` : "";
+  return `${assetOrigin()}/thumb/${encodeURIComponent(mediaId)}${query}`;
 }
 
 export function getProxyAssetUrl(mediaId: string): string {

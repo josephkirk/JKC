@@ -775,7 +775,9 @@ export const PlayerView: React.FC = () => {
 
   const isPdf = /\.pdf$/i.test(activeMedia.name);
   const isImage = activeMedia.kind === "image" && !isPdf;
-  const mediaUrl = useProxy ? getProxyAssetUrl(activeMedia.id) : getMediaAssetUrl(activeMedia.id);
+  const assetVersion = `${activeMedia.sizeBytes}-${activeMedia.modifiedMs}`;
+  const originalMediaUrl = getMediaAssetUrl(activeMedia.id, assetVersion);
+  const mediaUrl = useProxy ? getProxyAssetUrl(activeMedia.id) : originalMediaUrl;
 
   return (
     <div style={{ display: "flex", flex: 1, height: "100%", overflow: "hidden" }}>
@@ -793,8 +795,7 @@ export const PlayerView: React.FC = () => {
             overflow: "hidden",
           }}
         >
-          {/* Image Display Mode */}
-          {isPdf ? <PdfPages url={getMediaAssetUrl(activeMedia.id)} name={activeMedia.name} /> : isImage ? (
+          {isPdf ? <PdfPages url={originalMediaUrl} name={activeMedia.name} /> : isImage ? (
             <div
               style={{
                 width: "100%",
@@ -812,7 +813,8 @@ export const PlayerView: React.FC = () => {
                 </div>
               ) : (
                 <img
-                  src={getMediaAssetUrl(activeMedia.id)}
+                  key={originalMediaUrl}
+                  src={originalMediaUrl}
                   alt={activeMedia.name}
                   onError={() => setImagePreviewError("The image could not be decoded. Configure FFmpeg or relink to a supported file.")}
                   style={{

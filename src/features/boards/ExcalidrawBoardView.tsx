@@ -11,9 +11,9 @@ import { documentWithScene, elementDescriptorsForMath, elementDescriptorsForMedi
 
 type ThumbnailData = { dataURL: DataURL; mimeType: BinaryFileData["mimeType"] };
 
-async function thumbnailDataUrl(mediaId: string): Promise<ThumbnailData | undefined> {
+async function thumbnailDataUrl(mediaId: string, version?: string | number): Promise<ThumbnailData | undefined> {
   try {
-    const response = await fetch(getThumbnailUrl(mediaId));
+    const response = await fetch(getThumbnailUrl(mediaId, version), { cache: "no-store" });
     if (!response.ok || !response.headers.get("content-type")?.startsWith("image/")) return undefined;
     const mimeType = response.headers.get("content-type") as BinaryFileData["mimeType"];
     const blob = await response.blob();
@@ -33,28 +33,98 @@ function mathDataUrl(formula: string): DataURL {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="360" height="100"><foreignObject width="100%" height="100%"><div xmlns="http://www.w3.org/1999/xhtml" style="background:#202938;color:#f8fafc;padding:16px;font-family:'Cambria Math',serif;font-size:24px">${rendered}</div></foreignObject></svg>`;
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}` as DataURL;
 }
-async function hydrateMediaScene(document: BoardDocument, baseScene: ExcalidrawScene, replaceLegacy: boolean): Promise<ExcalidrawScene> {
-  const results = await Promise.all(document.items
-    .filter((item): item is BoardMediaItem => item.type === "image" || item.type === "video")
-    .map(async (item) => ({ item, thumbnail: await thumbnailDataUrl(item.mediaId) })));
+async function hydrateMediaScene(
+  document: BoardDocument,
+  baseScene: ExcalidrawScene,
+  replaceLegacy: boolean,
+): Promise<{ scene: ExcalidrawScene; correctedLegacyAspect: boolean }> {
+  const mediaItems = document.items.filter((item): item is BoardMediaItem => item.type === "image" || item.type === "video");
+  const results = await Promise.all(
+    mediaItems.map(async (item) => {
+      try {
+        const detail = await api.getMedia(item.mediaId);
+        const thumbnail = await thumbnailDataUrl(item.mediaId, `${detail.sizeBytes}-${detail.modifiedMs}`);
+        return { item, detail, thumbnail };
+      } catch {
+        return { item, detail: null, thumbnail: await thumbnailDataUrl(item.mediaId) };
+      }
+    }),
+  );
+
   let elements = baseScene.elements;
   const files = { ...baseScene.files };
-  for (const { item, thumbnail } of results) {
+  let correctedLegacyAspect = false;
+
+  for (const { item, detail, thumbnail } of results) {
     if (!thumbnail) continue;
+
     if (replaceLegacy) {
+      let width = item.width || 320;
+      let height = item.height || 220;
+      if (
+        item.width === 320 &&
+        item.height === 220 &&
+        detail?.width &&
+        detail?.height &&
+        detail.width > 0 &&
+        detail.height > 0
+      ) {
+        const aspect = detail.width / detail.height;
+        height = Math.max(20, Math.round(width / aspect));
+      }
       const replacement = convertToExcalidrawElements(
-        elementDescriptorsForMedia(item.mediaId, item.type, item.id, item.x, item.y, item.mediaId, item.width, item.height),
+        elementDescriptorsForMedia(item.mediaId, item.type, item.id, item.x, item.y, item.mediaId, width, height),
       ) as any[];
       elements = [...elements.filter((element) => element.customData?.jkcItemId !== item.id), ...replacement];
+    } else {
+      // For existing scenes, safely adjust only image elements that are still at the legacy 320x220:
+      // We spread the existing element so x, y, angle, groupIds, and customData are 100% preserved.
+      elements = elements.map((element: any) => {
+        if (
+          element.customData?.jkcItemId === item.id &&
+          element.type === "image" &&
+          element.width === 320 &&
+          element.height === 220 &&
+          detail?.width &&
+          detail?.height &&
+          detail.width > 0 &&
+          detail.height > 0
+        ) {
+          const aspect = detail.width / detail.height;
+          const correctedHeight = Math.max(20, Math.round(element.width / aspect));
+          if (correctedHeight === element.height) {
+            return element;
+          }
+          correctedLegacyAspect = true;
+          return {
+            ...element,
+            height: correctedHeight,
+            version: (element.version || 1) + 1,
+            versionNonce: Math.floor(Math.random() * 2000000000),
+            updated: Date.now(),
+          };
+        }
+        return element;
+      });
     }
+
     files[item.mediaId] = { id: item.mediaId as any, ...thumbnail, created: Date.now() };
   }
+
   for (const item of document.items) {
     if (item.type !== "math") continue;
     const element = elements.find((candidate) => candidate.customData?.jkcItemId === item.id && candidate.fileId);
-    if (element) files[element.fileId] = { id: element.fileId as any, mimeType: "image/svg+xml", dataURL: mathDataUrl(item.formula), created: Date.now() };
+    if (element) {
+      files[element.fileId] = {
+        id: element.fileId as any,
+        mimeType: "image/svg+xml",
+        dataURL: mathDataUrl(item.formula),
+        created: Date.now(),
+      };
+    }
   }
-  return { ...baseScene, elements, files };
+
+  return { scene: { ...baseScene, elements, files }, correctedLegacyAspect };
 }
 function parseMediaIds(event: React.DragEvent): string[] {
   const custom = event.dataTransfer.getData("application/jkc-media-ids");
@@ -127,7 +197,7 @@ export const ExcalidrawBoardView: React.FC = () => {
       setDocument(nextDocument);
       setScene(initialScene);
       setSaveStatus("saved");
-      const hydratedScene = await hydrateMediaScene(loaded, initialScene, migrated);
+      const { scene: hydratedScene, correctedLegacyAspect } = await hydrateMediaScene(loaded, initialScene, migrated);
       if (cancelled) return;
       sceneRef.current = hydratedScene;
       setScene(hydratedScene);
@@ -141,7 +211,7 @@ export const ExcalidrawBoardView: React.FC = () => {
       const hydratedDocument = documentWithScene(documentRef.current ?? loaded, hydratedScene);
       documentRef.current = hydratedDocument;
       setDocument(hydratedDocument);
-      if (migrated) await enqueueSave(hydratedDocument);
+      if (migrated || correctedLegacyAspect) await enqueueSave(hydratedDocument);
     }).catch((error) => {
       if (!cancelled) setSaveErrorMessage(error instanceof Error ? error.message : "Failed to load board");
     });
@@ -194,16 +264,44 @@ export const ExcalidrawBoardView: React.FC = () => {
       id: crypto.randomUUID(),
       x: x + index * 36,
       y: y + index * 36,
-      dataUrl: await thumbnailDataUrl(item.id),
+      dataUrl: await thumbnailDataUrl(item.id, `${item.sizeBytes}-${item.modifiedMs}`),
     })));
     if (documentRef.current?.id !== originId) throw new Error("Board changed while loading media");
-    const descriptors = placements.flatMap(({ item, id, x: itemX, y: itemY, dataUrl }) =>
-      elementDescriptorsForMedia(item.id, item.kind === "video" ? "video" : "image", id, itemX, itemY, dataUrl ? item.id : undefined),
-    );
-    const items: BoardMediaItem[] = placements.map(({ item, id, x: itemX, y: itemY }, index) => ({
-      id, type: item.kind === "video" ? "video" : "image", mediaId: item.id, x: itemX, y: itemY,
-      width: 320, height: 220, rotation: 0, zIndex: documentRef.current!.items.length + index,
-    }));
+    const descriptors = placements.flatMap(({ item, id, x: itemX, y: itemY, dataUrl }) => {
+      const aspect = item.width && item.height && item.width > 0 && item.height > 0
+        ? item.width / item.height
+        : (item.kind === "video" ? 16 / 9 : 1);
+      const width = 320;
+      const height = Math.max(20, Math.round(width / aspect));
+      return elementDescriptorsForMedia(
+        item.id,
+        item.kind === "video" ? "video" : "image",
+        id,
+        itemX,
+        itemY,
+        dataUrl ? item.id : undefined,
+        width,
+        height,
+      );
+    });
+    const items: BoardMediaItem[] = placements.map(({ item, id, x: itemX, y: itemY }, index) => {
+      const aspect = item.width && item.height && item.width > 0 && item.height > 0
+        ? item.width / item.height
+        : (item.kind === "video" ? 16 / 9 : 1);
+      const width = 320;
+      const height = Math.max(20, Math.round(width / aspect));
+      return {
+        id,
+        type: item.kind === "video" ? "video" : "image",
+        mediaId: item.id,
+        x: itemX,
+        y: itemY,
+        width,
+        height,
+        rotation: 0,
+        zIndex: documentRef.current!.items.length + index,
+      };
+    });
     const currentScene = sceneRef.current ?? { elements: [], appState: {}, files: {} };
     const elements = convertToExcalidrawElements(descriptors) as any[];
     const nextScene = {
@@ -340,6 +438,9 @@ export const ExcalidrawBoardView: React.FC = () => {
         <button type="button" className="btn" onClick={insertMath}>Insert Math</button>
         <button type="button" className="btn" onClick={editSelectedMath}>Edit Selected Math</button>
         <span aria-live="polite" style={{ color: "var(--text-muted)", fontSize: 12 }} dangerouslySetInnerHTML={{ __html: formulaPreview }} />
+        <span style={{ marginLeft: "auto", color: "var(--text-muted)", fontSize: 11 }}>
+          Tip: Hold Shift while dragging corner/side handles to resize images non-uniformly.
+        </span>
       </div>
       <div
         style={{ flex: 1, minHeight: 0, position: "relative", outline: isDropTarget ? "2px solid var(--accent)" : undefined }}
