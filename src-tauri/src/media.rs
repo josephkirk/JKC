@@ -114,6 +114,7 @@ pub struct MediaProcessor {
     app_data_dir: PathBuf,
     thumbnails_dir: PathBuf,
     proxies_dir: PathBuf,
+    image_previews_dir: PathBuf,
     editor_assets_dir: PathBuf,
     tools_dir: Mutex<Option<PathBuf>>,
     active_jobs: Arc<Mutex<HashMap<String, ActiveJob>>>,
@@ -124,16 +125,19 @@ impl MediaProcessor {
     pub fn new(app_data_dir: &Path) -> Result<Arc<Self>, AppError> {
         let thumbnails_dir = app_data_dir.join("thumbnails");
         let proxies_dir = app_data_dir.join("proxies");
+        let image_previews_dir = app_data_dir.join("image_previews");
         let editor_assets_dir = app_data_dir.join("editor_assets");
 
         std::fs::create_dir_all(&thumbnails_dir)?;
         std::fs::create_dir_all(&proxies_dir)?;
+        std::fs::create_dir_all(&image_previews_dir)?;
         std::fs::create_dir_all(&editor_assets_dir)?;
 
         Ok(Arc::new(Self {
             app_data_dir: app_data_dir.to_path_buf(),
             thumbnails_dir,
             proxies_dir,
+            image_previews_dir,
             editor_assets_dir,
             tools_dir: Mutex::new(None),
             active_jobs: Arc::new(Mutex::new(HashMap::new())),
@@ -401,6 +405,56 @@ impl MediaProcessor {
 
         atomic_replace(&temp_thumb, &thumb_path)?;
         Ok(thumb_path)
+    }
+
+    pub fn get_or_generate_image_preview(
+        &self,
+        media_id: &str,
+        path: &Path,
+        size_bytes: i64,
+        modified_ms: i64,
+    ) -> Result<PathBuf, AppError> {
+        let preview_path = self
+            .image_previews_dir
+            .join(format!("{}_{}_{}.png", media_id, size_bytes, modified_ms));
+        if preview_path.exists() {
+            return Ok(preview_path);
+        }
+        {
+            let mut count = self.permit_pool.active.lock();
+            while *count >= 2 {
+                self.permit_pool.cond.wait(&mut count);
+            }
+            *count += 1;
+        }
+        let _guard = PermitGuard(&self.permit_pool);
+
+        let ffmpeg = self.resolve_binary("ffmpeg").ok_or_else(|| {
+            AppError::new("FFMPEG_MISSING", "FFmpeg executable not found for image preview")
+        })?;
+        let temp_preview = self
+            .image_previews_dir
+            .join(format!("{}.tmp.png", uuid::Uuid::new_v4()));
+        let mut command = Command::new(ffmpeg);
+        command
+            .args(["-y", "-i"])
+            .arg(path)
+            .args(["-map", "0:v:0", "-frames:v", "1"])
+            .arg(&temp_preview);
+        configure_hidden_command(&mut command);
+        let output = command.output().map_err(|error| {
+            AppError::with_details("IMAGE_PREVIEW_FAILED", "Failed to run ffmpeg for image preview", error.to_string())
+        })?;
+        if !output.status.success() {
+            let _ = std::fs::remove_file(&temp_preview);
+            return Err(AppError::with_details(
+                "IMAGE_PREVIEW_FAILED",
+                "FFmpeg could not decode this image",
+                String::from_utf8_lossy(&output.stderr).to_string(),
+            ));
+        }
+        atomic_replace(&temp_preview, &preview_path)?;
+        Ok(preview_path)
     }
 
     pub fn get_proxy_path(&self, media_id: &str) -> PathBuf {

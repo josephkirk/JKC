@@ -274,6 +274,7 @@ export const PlayerView: React.FC = () => {
   const [isMuted, setIsMuted] = useState(false);
   const [playbackRate, setPlaybackRate] = useState(1);
   const [playbackFailed, setPlaybackFailed] = useState(false);
+  const [imagePreviewError, setImagePreviewError] = useState<string | null>(null);
   const [useProxy, setUseProxy] = useState(false);
   const [isGeneratingProxy, setIsGeneratingProxy] = useState(false);
 
@@ -323,6 +324,7 @@ export const PlayerView: React.FC = () => {
     const seq = ++loadSeqRef.current;
     setHydratedMediaId(null);
     setPlaybackFailed(false);
+    setImagePreviewError(null);
     setUseProxy(false);
     setIsPlaying(false);
     setCurrentTimeMs(0);
@@ -803,15 +805,23 @@ export const PlayerView: React.FC = () => {
                 overflow: imageZoom === "actual" ? "auto" : "hidden",
               }}
             >
-              <img
-                src={getMediaAssetUrl(activeMedia.id)}
-                alt={activeMedia.name}
-                style={{
-                  maxWidth: imageZoom === "fit" ? "100%" : "none",
-                  maxHeight: imageZoom === "fit" ? "100%" : "none",
-                  objectFit: "contain",
-                }}
-              />
+              {imagePreviewError ? (
+                <div className="empty-state" role="alert">
+                  <div className="empty-state-title">Image preview unavailable</div>
+                  <div className="empty-state-desc">{imagePreviewError}</div>
+                </div>
+              ) : (
+                <img
+                  src={getMediaAssetUrl(activeMedia.id)}
+                  alt={activeMedia.name}
+                  onError={() => setImagePreviewError("The image could not be decoded. Configure FFmpeg or relink to a supported file.")}
+                  style={{
+                    maxWidth: imageZoom === "fit" ? "100%" : "none",
+                    maxHeight: imageZoom === "fit" ? "100%" : "none",
+                    objectFit: "contain",
+                  }}
+                />
+              )}
             </div>
           ) : (
             /* Video Display Mode */

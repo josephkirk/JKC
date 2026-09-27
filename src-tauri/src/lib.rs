@@ -142,6 +142,33 @@ pub fn run() {
                                 responder.respond(Response::builder().status(StatusCode::NOT_FOUND).body(Vec::new()).unwrap());
                                 return;
                             }
+                            let is_jp2 = media.kind == "image"
+                                && matches!(
+                                    file_path.extension().and_then(|ext| ext.to_str()).map(str::to_ascii_lowercase).as_deref(),
+                                    Some("jp2" | "j2k" | "jpf" | "jpx")
+                                );
+                            let preview_range = range_header.clone();
+                            if is_jp2 {
+                                let processor = state.media.clone();
+                                let media_id = media.id.clone();
+                                tauri::async_runtime::spawn_blocking(move || {
+                                    match processor.get_or_generate_image_preview(
+                                        &media_id,
+                                        &canon_file,
+                                        media.size_bytes,
+                                        media.modified_ms,
+                                    ) {
+                                        Ok(preview_path) => responder.respond(serve_file(&preview_path, preview_range.as_deref())),
+                                        Err(_) => responder.respond(
+                                            Response::builder()
+                                                .status(StatusCode::UNSUPPORTED_MEDIA_TYPE)
+                                                .body(Vec::new())
+                                                .unwrap(),
+                                        ),
+                                    }
+                                });
+                                return;
+                            }
                             responder.respond(serve_file(&canon_file, range_header.as_deref()));
                         }
                         Err(_) => {
