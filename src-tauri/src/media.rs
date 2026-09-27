@@ -5,7 +5,15 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use std::sync::atomic::{AtomicBool, Ordering};
+fn configure_hidden_command(command: &mut Command) {
+    command.stdin(Stdio::null());
+    #[cfg(windows)]
+    command.creation_flags(0x08000000);
+}
+
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 
@@ -198,10 +206,10 @@ impl MediaProcessor {
 
         let (ffmpeg_avail, ffmpeg_ver) = match &ffmpeg_bin {
             Some(path) => {
-                let ver = Command::new(path)
-                    .arg("-version")
-                    .output()
-                    .ok()
+                let mut command = Command::new(path);
+                command.arg("-version");
+                configure_hidden_command(&mut command);
+                let ver = command.output().ok()
                     .and_then(|out| {
                         let text = String::from_utf8_lossy(&out.stdout).to_string();
                         text.lines().next().map(|l| l.to_string())
@@ -213,10 +221,10 @@ impl MediaProcessor {
 
         let (ffprobe_avail, ffprobe_ver) = match &ffprobe_bin {
             Some(path) => {
-                let ver = Command::new(path)
-                    .arg("-version")
-                    .output()
-                    .ok()
+                let mut command = Command::new(path);
+                command.arg("-version");
+                configure_hidden_command(&mut command);
+                let ver = command.output().ok()
                     .and_then(|out| {
                         let text = String::from_utf8_lossy(&out.stdout).to_string();
                         text.lines().next().map(|l| l.to_string())
@@ -261,20 +269,22 @@ impl MediaProcessor {
             AppError::new("FFPROBE_MISSING", "FFprobe executable not found on system")
         })?;
 
-        let output = Command::new(ffprobe)
-            .args([
-                "-v",
-                "error",
-                "-select_streams",
-                "v:0",
-                "-show_entries",
-                "stream=width,height,duration",
-                "-show_entries",
-                "format=duration",
-                "-of",
-                "json",
-            ])
-            .arg(path)
+        let mut command = Command::new(ffprobe);
+        command.args([
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=width,height,duration",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "json",
+        ]);
+        command.arg(path);
+        configure_hidden_command(&mut command);
+        let output = command
             .output()
             .map_err(|e| AppError::with_details("PROBE_FAILED", "Failed to run ffprobe", e.to_string()))?;
 
@@ -362,7 +372,7 @@ impl MediaProcessor {
             .arg(path)
             .args(["-vframes", "1", "-vf", "scale=w='min(400,iw)':h=-1", "-q:v", "3"])
             .arg(&temp_thumb);
-
+        configure_hidden_command(&mut cmd);
         let res = cmd.output();
         let success = match res {
             Ok(output) if output.status.success() => true,
@@ -376,6 +386,7 @@ impl MediaProcessor {
                 .arg(path)
                 .args(["-vframes", "1", "-vf", "scale=w='min(400,iw)':h=-1", "-q:v", "3"])
                 .arg(&temp_thumb);
+            configure_hidden_command(&mut retry_cmd);
 
             let retry_res = retry_cmd.output().map_err(|e| {
                 AppError::with_details("THUMB_ERROR", "Failed to execute ffmpeg for thumbnail", e.to_string())
@@ -459,9 +470,9 @@ impl MediaProcessor {
                 "-movflags",
                 "+faststart",
             ])
-            .arg(&temp_proxy)
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped());
+            .arg(&temp_proxy);
+        configure_hidden_command(&mut cmd);
+        cmd.stdout(Stdio::null()).stderr(Stdio::piped());
 
         let mut child = cmd.spawn().map_err(|e| {
             active_jobs.lock().remove(job_id);
@@ -612,6 +623,7 @@ impl MediaProcessor {
             .arg(input_path)
             .args(["-vframes", "1"])
             .arg(&temp_still);
+        configure_hidden_command(&mut cmd);
 
         let output = cmd.output().map_err(|e| {
             AppError::with_details("CAPTURE_FAILED", "Failed to run ffmpeg still capture", e.to_string())
@@ -640,6 +652,7 @@ impl MediaProcessor {
         cmd.args(["-i"])
             .arg(input_path)
             .args(["-filter_complex", "select='gt(scene,0.30)',showinfo", "-f", "null", "-"]);
+        configure_hidden_command(&mut cmd);
 
         let output = cmd.output().map_err(|e| {
             AppError::with_details("SHOT_DETECT_FAILED", "Failed to execute ffmpeg for shot detection", e.to_string())
@@ -773,6 +786,7 @@ impl MediaProcessor {
                 .arg(&temp_target);
         }
 
+        configure_hidden_command(&mut cmd);
         cmd.stdout(Stdio::null()).stderr(Stdio::piped());
 
         let mut child = cmd.spawn().map_err(|e| {

@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
+use tauri_plugin_dialog::DialogExt;
 use walkdir::WalkDir;
 
 pub struct AppState {
@@ -277,16 +278,22 @@ pub fn list_roots(state: State<AppState>) -> Result<Vec<RootFolder>, AppError> {
 }
 
 #[tauri::command]
-pub fn add_root_folder(
+pub async fn add_root_folder(
     app: AppHandle,
-    state: State<AppState>,
+    state: State<'_, AppState>,
     path: String,
 ) -> Result<RootFolder, AppError> {
     let root = state.db.add_root(&path)?;
-    // Trigger initial scan
     let root_id = root.id.clone();
-    let _ = scan_root_internal(&app, &state, &root_id)?;
-    // Return updated root with media count
+    let scan_root_id = root_id.clone();
+    let db = Arc::clone(&state.db);
+    let media = Arc::clone(&state.media);
+    tauri::async_runtime::spawn_blocking(move || {
+        let worker_state = AppState { db, media };
+        scan_root_internal(&app, &worker_state, &scan_root_id)
+    })
+    .await
+    .map_err(|e| AppError::with_details("BACKGROUND_JOB_FAILED", "Library scan stopped unexpectedly", e.to_string()))??;
     let updated = state.db.get_root(&root_id)?.unwrap_or(root);
     Ok(updated)
 }
@@ -300,39 +307,53 @@ pub fn remove_root_folder(
 }
 
 #[tauri::command]
-pub fn scan_root(
+pub async fn scan_root(
     app: AppHandle,
-    state: State<AppState>,
+    state: State<'_, AppState>,
     root_id: String,
 ) -> Result<ScanSummary, AppError> {
-    scan_root_internal(&app, &state, &root_id)
+    let db = Arc::clone(&state.db);
+    let media = Arc::clone(&state.media);
+    tauri::async_runtime::spawn_blocking(move || {
+        let worker_state = AppState { db, media };
+        scan_root_internal(&app, &worker_state, &root_id)
+    })
+    .await
+    .map_err(|e| AppError::with_details("BACKGROUND_JOB_FAILED", "Library scan stopped unexpectedly", e.to_string()))?
 }
 
 #[tauri::command]
-pub fn refresh_library(
+pub async fn refresh_library(
     app: AppHandle,
-    state: State<AppState>,
+    state: State<'_, AppState>,
 ) -> Result<ScanSummary, AppError> {
-    let roots = state.db.list_roots()?;
-    let mut total_summary = ScanSummary {
-        added: 0,
-        updated: 0,
-        missing: 0,
-        skipped: 0,
-        errors: Vec::new(),
-    };
+    let db = Arc::clone(&state.db);
+    let media = Arc::clone(&state.media);
+    tauri::async_runtime::spawn_blocking(move || {
+        let worker_state = AppState { db, media };
+        let roots = worker_state.db.list_roots()?;
+        let mut total_summary = ScanSummary {
+            added: 0,
+            updated: 0,
+            missing: 0,
+            skipped: 0,
+            errors: Vec::new(),
+        };
 
-    for root in roots {
-        if let Ok(sum) = scan_root_internal(&app, &state, &root.id) {
-            total_summary.added += sum.added;
-            total_summary.updated += sum.updated;
-            total_summary.missing += sum.missing;
-            total_summary.skipped += sum.skipped;
-            total_summary.errors.extend(sum.errors);
+        for root in roots {
+            if let Ok(sum) = scan_root_internal(&app, &worker_state, &root.id) {
+                total_summary.added += sum.added;
+                total_summary.updated += sum.updated;
+                total_summary.missing += sum.missing;
+                total_summary.skipped += sum.skipped;
+                total_summary.errors.extend(sum.errors);
+            }
         }
-    }
 
-    Ok(total_summary)
+        Ok(total_summary)
+    })
+    .await
+    .map_err(|e| AppError::with_details("BACKGROUND_JOB_FAILED", "Library refresh stopped unexpectedly", e.to_string()))?
 }
 
 fn scan_root_internal(
@@ -579,7 +600,6 @@ pub fn set_favorite(
 ) -> Result<(), AppError> {
     state.db.set_favorite(&id, favorite)
 }
-
 #[tauri::command]
 pub fn set_tags(
     state: State<AppState>,
@@ -594,24 +614,98 @@ pub fn get_all_tags(state: State<AppState>) -> Result<Vec<String>, AppError> {
     state.db.get_all_tags()
 }
 
-#[tauri::command]
-pub fn relink_media(
-    state: State<AppState>,
-    media_id: String,
-    new_path: String,
-) -> Result<MediaItem, AppError> {
-    let hash = state.media.compute_file_hash(Path::new(&new_path)).ok();
-    let mut item = state.db.relink_media(&media_id, &new_path, hash.as_deref())?;
-    if let Ok((w, h, dur)) = state.media.probe_media(Path::new(&item.path), &item.kind) {
-        let _ = state.db.update_media_metadata(&item.id, w, h, dur);
-        item.width = w;
-        item.height = h;
-        item.duration_ms = dur;
+fn validate_relink_source(
+    new_path: &str,
+    expected_kind: &str,
+) -> Result<PathBuf, AppError> {
+    let path = Path::new(new_path);
+    let canonical = path
+        .canonicalize()
+        .map_err(|_| AppError::new("FILE_NOT_FOUND", "Relink destination does not exist"))?;
+    if !canonical.is_file() {
+        return Err(AppError::new("INVALID_MEDIA", "Relink destination must be a regular media file"));
     }
-    let _ = state.media.get_or_generate_thumbnail(&item.id, Path::new(&item.path), &item.kind, item.size_bytes, item.modified_ms);
-    item.thumbnail_url = Some(format!("{}/thumb/{}", ASSET_ORIGIN, item.id));
-    item.asset_url = Some(format!("{}/media/{}", ASSET_ORIGIN, item.id));
-    Ok(item)
+
+    let ext = canonical
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let supported = match expected_kind {
+        "image" => SUPPORTED_IMAGE_EXTS.contains(&ext.as_str()),
+        "video" => SUPPORTED_VIDEO_EXTS.contains(&ext.as_str()),
+        _ => false,
+    };
+    if !supported {
+        return Err(AppError::new("UNSUPPORTED_MEDIA", "Relink destination has an unsupported media type"));
+    }
+    Ok(canonical)
+}
+
+
+#[tauri::command]
+pub async fn pick_relink_media(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    media_id: String,
+) -> Result<Option<MediaItem>, AppError> {
+    let existing = state.db.get_media(&media_id)?;
+    let extensions = if existing.kind == "image" {
+        vec!["jpg", "jpeg", "png", "webp", "bmp", "gif"]
+    } else {
+        SUPPORTED_VIDEO_EXTS.to_vec()
+    };
+    let selected = app
+        .dialog()
+        .file()
+        .add_filter(if existing.kind == "image" { "Images" } else { "Videos" }, &extensions)
+        .blocking_pick_file();
+    let Some(selected) = selected else {
+        return Ok(None);
+    };
+    let selected_path = selected
+        .into_path()
+        .map_err(|e| AppError::with_details("INVALID_SELECTION", "Selected path is not a local file", e.to_string()))?;
+
+    let expected_kind = existing.kind.clone();
+    let db = Arc::clone(&state.db);
+    let media = Arc::clone(&state.media);
+    let item = tauri::async_runtime::spawn_blocking(move || -> Result<MediaItem, AppError> {
+        let selected_path_string = selected_path.to_string_lossy().to_string();
+        let canonical = validate_relink_source(&selected_path_string, &expected_kind)?;
+        let metadata = canonical.metadata()?;
+        let size_bytes = metadata.len() as i64;
+        let modified_ms = metadata
+            .modified()
+            .ok()
+            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|duration| duration.as_millis() as i64)
+            .unwrap_or(0);
+        let (width, height, duration_ms) = media.probe_media(&canonical, &expected_kind)
+            .map_err(|error| AppError::with_details("INVALID_MEDIA", "Selected file could not be decoded or probed", error.message))?;
+        let hash = media.compute_file_hash(&canonical)?;
+        let _ = media.get_or_generate_thumbnail(
+            &media_id,
+            &canonical,
+            &expected_kind,
+            size_bytes,
+            modified_ms,
+        )?;
+        let canonical_path = canonical.to_string_lossy().to_string();
+        let mut item = db.relink_media(&media_id, &canonical_path, Some(&hash))?;
+        db.update_media_metadata(&item.id, width, height, duration_ms)?;
+        item.width = width;
+        item.height = height;
+        item.duration_ms = duration_ms;
+        item.size_bytes = size_bytes;
+        item.modified_ms = modified_ms;
+        item.thumbnail_url = Some(format!("{}/thumb/{}", ASSET_ORIGIN, item.id));
+        item.asset_url = Some(format!("{}/media/{}", ASSET_ORIGIN, item.id));
+        Ok(item)
+    })
+    .await
+    .map_err(|e| AppError::with_details("BACKGROUND_JOB_FAILED", "Relink stopped unexpectedly", e.to_string()))??;
+    Ok(Some(item))
 }
 
 // Reviews
@@ -657,14 +751,23 @@ pub fn generate_proxy(
 }
 
 #[tauri::command]
-pub fn capture_still(
-    state: State<AppState>,
+pub async fn capture_still(
+    state: State<'_, AppState>,
     req: CaptureStillRequest,
 ) -> Result<(), AppError> {
     let media = state.db.get_media(&req.media_id)?;
-    state
-        .media
-        .capture_still(Path::new(&media.path), req.time_ms, Path::new(&req.target_path))
+    let duration_ms = media.duration_ms.ok_or_else(|| {
+        AppError::new("DURATION_UNKNOWN", "Media duration is required before still capture")
+    })?;
+    if req.time_ms < 0 || req.time_ms > duration_ms {
+        return Err(AppError::new("INVALID_TIME", "Still capture time must be within the media duration"));
+    }
+    let processor = Arc::clone(&state.media);
+    tauri::async_runtime::spawn_blocking(move || {
+        processor.capture_still(Path::new(&media.path), req.time_ms, Path::new(&req.target_path))
+    })
+    .await
+    .map_err(|e| AppError::with_details("BACKGROUND_JOB_FAILED", "Still capture stopped unexpectedly", e.to_string()))?
 }
 
 #[tauri::command]
@@ -674,6 +777,15 @@ pub fn export_take(
     req: ExportTakeRequest,
 ) -> Result<String, AppError> {
     let media = state.db.get_media(&req.media_id)?;
+    let duration_ms = media.duration_ms.ok_or_else(|| {
+        AppError::new("DURATION_UNKNOWN", "Media duration is required before export")
+    })?;
+    if req.in_ms < 0 || req.out_ms <= req.in_ms || req.out_ms > duration_ms {
+        return Err(AppError::new(
+            "INVALID_RANGE",
+            "Export range must be within the media duration and out-point must be greater than in-point",
+        ));
+    }
     let job_id = uuid::Uuid::new_v4().to_string();
     state.media.export_take(
         app,
@@ -688,8 +800,8 @@ pub fn export_take(
 }
 
 #[tauri::command]
-pub fn detect_shots(
-    state: State<AppState>,
+pub async fn detect_shots(
+    state: State<'_, AppState>,
     media_id: String,
 ) -> Result<Vec<i64>, AppError> {
     let media = state.db.get_media(&media_id)?;
@@ -697,7 +809,10 @@ pub fn detect_shots(
     if dur <= 0 {
         return Ok(vec![0]);
     }
-    state.media.detect_shots(Path::new(&media.path), dur)
+    let processor = Arc::clone(&state.media);
+    tauri::async_runtime::spawn_blocking(move || processor.detect_shots(Path::new(&media.path), dur))
+        .await
+        .map_err(|e| AppError::with_details("BACKGROUND_JOB_FAILED", "Shot detection stopped unexpectedly", e.to_string()))?
 }
 
 #[tauri::command]
@@ -1053,4 +1168,27 @@ pub fn export_editor_composite(
     }
     crate::media::atomic_replace(&temp_target, target)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod relink_authorization_tests {
+    use super::validate_relink_source;
+    use tempfile::tempdir;
+
+    #[test]
+    fn relink_file_validation_accepts_supported_regular_files() {
+        let dir = tempdir().unwrap();
+        let image = dir.path().join("replacement.png");
+        image::RgbaImage::new(2, 2).save(&image).unwrap();
+        assert!(validate_relink_source(image.to_str().unwrap(), "image").is_ok());
+    }
+
+    #[test]
+    fn relink_file_validation_rejects_wrong_kind_and_missing_files() {
+        let dir = tempdir().unwrap();
+        let image = dir.path().join("replacement.png");
+        image::RgbaImage::new(2, 2).save(&image).unwrap();
+        assert!(validate_relink_source(image.to_str().unwrap(), "video").is_err());
+        assert!(validate_relink_source(dir.path().join("missing.png").to_str().unwrap(), "image").is_err());
+    }
 }

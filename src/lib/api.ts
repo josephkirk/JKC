@@ -72,7 +72,7 @@ export const api = {
   setFavorite: (id: string, favorite: boolean) => call<void>("set_favorite", { id, favorite }),
   setTags: (mediaId: string, tags: string[]) => call<void>("set_tags", { mediaId, tags }),
   getAllTags: () => call<string[]>("get_all_tags"),
-  relinkMedia: (mediaId: string, newPath: string) => call<MediaItem>("relink_media", { mediaId, newPath }),
+  pickRelinkMedia: (mediaId: string) => call<MediaItem | null>("pick_relink_media", { mediaId }),
 
   // Review & Video
   getReview: (mediaId: string) => call<ReviewDocument>("get_review", { mediaId }),
@@ -114,15 +114,6 @@ export const api = {
     return typeof selected === "string" ? selected : null;
   },
 
-  pickFile: async (filters: { name: string; extensions: string[] }[]): Promise<string | null> => {
-    const selected = await open({
-      directory: false,
-      multiple: false,
-      filters,
-      title: "Select File",
-    });
-    return typeof selected === "string" ? selected : null;
-  },
 
   saveFile: async (defaultPath: string, filters: { name: string; extensions: string[] }[]): Promise<string | null> => {
     const selected = await save({

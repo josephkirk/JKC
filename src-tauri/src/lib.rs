@@ -138,21 +138,11 @@ pub fn run() {
                                     return;
                                 }
                             };
-                            let roots = state.db.list_roots().unwrap_or_default();
-                            let mut authorized = false;
-                            for r in roots {
-                                if let Ok(canon_root) = PathBuf::from(&r.path).canonicalize() {
-                                    if canon_file.starts_with(&canon_root) {
-                                        authorized = true;
-                                        break;
-                                    }
-                                }
-                            }
-                            if !authorized {
-                                responder.respond(Response::builder().status(StatusCode::FORBIDDEN).body(Vec::new()).unwrap());
+                            if media.missing {
+                                responder.respond(Response::builder().status(StatusCode::NOT_FOUND).body(Vec::new()).unwrap());
                                 return;
                             }
-                            responder.respond(serve_file(&file_path, range_header.as_deref()));
+                            responder.respond(serve_file(&canon_file, range_header.as_deref()));
                         }
                         Err(_) => {
                             responder.respond(
@@ -168,26 +158,26 @@ pub fn run() {
                     let media_res = state.db.get_media(target_id);
                     match media_res {
                         Ok(media) => {
-                            let thumb_res = state.media.get_or_generate_thumbnail(
-                                &media.id,
-                                Path::new(&media.path),
-                                &media.kind,
-                                media.size_bytes,
-                                media.modified_ms,
-                            );
-                            match thumb_res {
-                                Ok(thumb_path) => {
-                                    responder.respond(serve_file(&thumb_path, None));
-                                }
-                                Err(_) => {
-                                    responder.respond(
+                            let processor = state.media.clone();
+                            let media_id = media.id.clone();
+                            tauri::async_runtime::spawn_blocking(move || {
+                                let thumb_res = processor.get_or_generate_thumbnail(
+                                    &media_id,
+                                    Path::new(&media.path),
+                                    &media.kind,
+                                    media.size_bytes,
+                                    media.modified_ms,
+                                );
+                                match thumb_res {
+                                    Ok(thumb_path) => responder.respond(serve_file(&thumb_path, None)),
+                                    Err(_) => responder.respond(
                                         Response::builder()
                                             .status(StatusCode::NOT_FOUND)
                                             .body(Vec::new())
                                             .unwrap(),
-                                    );
+                                    ),
                                 }
-                            }
+                            });
                         }
                         Err(_) => {
                             responder.respond(
@@ -263,7 +253,7 @@ pub fn run() {
             set_favorite,
             set_tags,
             get_all_tags,
-            relink_media,
+            pick_relink_media,
             get_review,
             save_review,
             generate_proxy,
