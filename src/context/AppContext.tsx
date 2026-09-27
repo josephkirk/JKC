@@ -18,6 +18,9 @@ interface AppContextValue {
   setActiveBoardId: (id: string | null) => void;
   activeEditorId: string | null;
   setActiveEditorId: (id: string | null) => void;
+  pendingBoardMediaIds: string[];
+  queueBoardMedia: (ids: string[]) => void;
+  clearPendingBoardMedia: () => void;
   libraryPaletteOpen: boolean;
   openLibraryPalette: () => void;
   closeLibraryPalette: () => void;
@@ -26,8 +29,11 @@ interface AppContextValue {
   setInspectorOpen: (open: boolean) => void;
   toggleInspector: () => void;
   systemInfo: SystemInfo | null;
-  refreshSystemInfo: () => Promise<void>;
+  systemInfoStatus: "idle" | "loading" | "ready" | "error";
+  systemInfoError: string | null;
+  refreshSystemInfo: (knownInfo?: SystemInfo) => Promise<void>;
   settings: AppSettings | null;
+  settingsReady: boolean;
   saveSettings: (newSettings: Partial<AppSettings>) => Promise<void>;
   jobs: Record<string, JobProgressEvent>;
   cancelJob: (jobId: string) => Promise<void>;
@@ -48,9 +54,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [activeMedia, setActiveMedia] = useState<MediaItem | null>(null);
   const [activeBoardId, setActiveBoardId] = useState<string | null>(null);
   const [activeEditorId, setActiveEditorId] = useState<string | null>(null);
+  const [pendingBoardMediaIds, setPendingBoardMediaIds] = useState<string[]>([]);
+  const [settingsReady, setSettingsReady] = useState(false);
   const [libraryPaletteOpen, setLibraryPaletteOpen] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(true);
   const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null);
+  const [systemInfoStatus, setSystemInfoStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [systemInfoError, setSystemInfoError] = useState<string | null>(null);
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [jobs, setJobs] = useState<Record<string, JobProgressEvent>>({});
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("saved");
@@ -100,15 +110,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     [flushPendingSave]
   );
 
-  const refreshSystemInfo = useCallback(async () => {
+  const refreshSystemInfo = useCallback(async (knownInfo?: SystemInfo) => {
+    if (knownInfo) {
+      setSystemInfo(knownInfo);
+      setSystemInfoError(null);
+      setSystemInfoStatus("ready");
+      return;
+    }
+    setSystemInfoStatus("loading");
+    setSystemInfoError(null);
     try {
       const info = await api.getSystemInfo();
       setSystemInfo(info);
+      setSystemInfoStatus("ready");
     } catch (err) {
+      const message =
+        typeof err === "object" && err !== null && "message" in err && typeof err.message === "string"
+          ? err.message
+          : err instanceof Error
+            ? err.message
+            : "System detection failed";
+      setSystemInfoError(message);
+      setSystemInfoStatus("error");
       console.error("Failed to load system info:", err);
     }
   }, []);
-
   const refreshActiveMedia = useCallback(async () => {
     if (!activeMediaId) {
       setActiveMedia(null);
@@ -168,6 +194,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     [flushPendingSave]
   );
 
+  const queueBoardMedia = useCallback((ids: string[]) => {
+    setPendingBoardMediaIds((current) => [...new Set([...current, ...ids])]);
+  }, []);
+  const clearPendingBoardMedia = useCallback(() => setPendingBoardMediaIds([]), []);
   const openLibraryPalette = useCallback(() => setLibraryPaletteOpen(true), []);
   const closeLibraryPalette = useCallback(() => setLibraryPaletteOpen(false), []);
   const toggleLibraryPalette = useCallback(() => setLibraryPaletteOpen((open) => !open), []);
@@ -193,28 +223,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, []);
 
-  // Initial load
+  // Read navigation state before mounting a workspace. Binary detection stays out of bootstrap.
   useEffect(() => {
-    refreshSystemInfo();
     api
       .getSettings()
       .then((s) => {
         setSettings(s);
-        if (s.lastView) {
-          setActiveViewInternal(s.lastView);
-        }
-        if (s.lastMediaId) {
-          setActiveMediaId(s.lastMediaId);
-        }
-        if (s.lastBoardId) {
-          setActiveBoardId(s.lastBoardId);
-        }
-        if (s.lastEditorId) {
-          setActiveEditorId(s.lastEditorId);
-        }
+        if (s.lastView) setActiveViewInternal(s.lastView);
+        if (s.lastMediaId) setActiveMediaId(s.lastMediaId);
+        if (s.lastBoardId) setActiveBoardId(s.lastBoardId);
+        if (s.lastEditorId) setActiveEditorId(s.lastEditorId);
       })
-      .catch(console.error);
-  }, [refreshSystemInfo]);
+      .catch(console.error)
+      .finally(() => setSettingsReady(true));
+  }, []);
 
   // Listen to Tauri job progress events
   useEffect(() => {
@@ -261,6 +283,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setActiveBoardId,
         activeEditorId,
         setActiveEditorId,
+        pendingBoardMediaIds,
+        queueBoardMedia,
+        clearPendingBoardMedia,
         libraryPaletteOpen,
         openLibraryPalette,
         closeLibraryPalette,
@@ -269,8 +294,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setInspectorOpen,
         toggleInspector,
         systemInfo,
+        systemInfoStatus,
+        systemInfoError,
         refreshSystemInfo,
         settings,
+        settingsReady,
         saveSettings,
         jobs,
         cancelJob,

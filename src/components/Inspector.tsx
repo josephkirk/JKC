@@ -99,8 +99,8 @@ export const Inspector: React.FC = () => {
 
   const handleRelink = async () => {
     const isImg = activeMedia.kind === "image";
-    const exts = isImg ? ["jpg", "jpeg", "png", "webp", "bmp", "gif"] : ["mp4", "mov", "mkv", "webm", "avi", "m4v"];
-    const chosen = await api.pickFile([{ name: isImg ? "Images" : "Videos", extensions: exts }]);
+    const exts = isImg ? ["jpg", "jpeg", "png", "webp", "bmp", "gif", "jp2", "j2k", "jpf", "jpx", "pdf"] : ["mp4", "mov", "mkv", "webm", "avi", "m4v"];
+    const chosen = await api.pickFile([{ name: isImg ? "Images and PDFs" : "Videos", extensions: exts }]);
     if (chosen) {
       try {
         await api.relinkMedia(activeMedia.id, chosen);

@@ -794,7 +794,19 @@ export const ImageEditorView: React.FC = () => {
   };
   const handleLibraryDrop = async (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
-    const mediaId = e.dataTransfer.getData("application/jkc-media-id");
+    const primaryId = e.dataTransfer.getData("application/jkc-media-id");
+    let mediaId = primaryId;
+    if (!mediaId) {
+      const plain = e.dataTransfer.getData("text/plain");
+      if (plain.startsWith("jkc-media:")) {
+        try {
+          const parsed = JSON.parse(plain.slice("jkc-media:".length));
+          if (Array.isArray(parsed) && typeof parsed[0] === "string") mediaId = parsed[0];
+        } catch {
+          // Ignore unrelated text drops.
+        }
+      }
+    }
     if (!mediaId) return;
     try {
       const media = await api.getMedia(mediaId);
@@ -809,7 +821,7 @@ export const ImageEditorView: React.FC = () => {
   };
 
   const handleLibraryDragOver = (e: React.DragEvent<HTMLDivElement>) => {
-    if (e.dataTransfer.types.includes("application/jkc-media-id")) e.preventDefault();
+    e.preventDefault();
   };
 
   return (

@@ -12,11 +12,14 @@
     "test:fixtures": "node scripts/create-fixtures.mjs"
   },
   "dependencies": {
+    "@excalidraw/excalidraw": "^0.18.1",
     "@tauri-apps/api": "^2.2.0",
     "@tauri-apps/plugin-dialog": "^2.2.0",
     "clsx": "^2.1.1",
+    "katex": "^0.18.9",
     "konva": "^9.3.18",
     "lucide-react": "^0.475.0",
+    "pdfjs-dist": "^6.3.289",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-konva": "^19.0.2",

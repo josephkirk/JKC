@@ -114,7 +114,7 @@ export interface BoardViewport {
   scale: number;
 }
 
-export type BoardItemType = "image" | "video" | "text" | "note" | "drawing";
+export type BoardItemType = "image" | "video" | "text" | "note" | "drawing" | "math";
 
 export interface BoardItemBase {
   id: string;
@@ -157,7 +157,18 @@ export interface BoardDrawingItem extends BoardItemBase {
   points: BoardDrawingPoint[];
 }
 
-export type BoardItem = BoardMediaItem | BoardTextItem | BoardNoteItem | BoardDrawingItem;
+export interface BoardMathItem extends BoardItemBase {
+  type: "math";
+  formula: string;
+}
+
+export type BoardItem = BoardMediaItem | BoardTextItem | BoardNoteItem | BoardDrawingItem | BoardMathItem;
+
+export interface ExcalidrawSceneDocument {
+  version: 1;
+  elements: unknown[];
+  appState?: Record<string, unknown>;
+}
 
 export interface BoardDocument {
   version: 1;
@@ -165,6 +176,7 @@ export interface BoardDocument {
   name: string;
   viewport: BoardViewport;
   items: BoardItem[];
+  excalidrawScene?: ExcalidrawSceneDocument;
 }
 
 export interface BoardSummary {

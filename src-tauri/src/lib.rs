@@ -25,9 +25,11 @@ fn guess_mime(path: &Path) -> &'static str {
     match path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase().as_str() {
         "png" => "image/png",
         "jpg" | "jpeg" => "image/jpeg",
+        "jp2" | "j2k" | "jpf" | "jpx" => "image/jp2",
         "webp" => "image/webp",
         "gif" => "image/gif",
         "bmp" => "image/bmp",
+        "pdf" => "application/pdf",
         "mp4" | "m4v" => "video/mp4",
         "webm" => "video/webm",
         "mkv" => "video/x-matroska",
@@ -247,9 +249,9 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            exit_app,
             get_system_info,
             get_settings,
-            save_settings,
             set_tools_dir,
             list_roots,
             add_root_folder,

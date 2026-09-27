@@ -27,6 +27,9 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ floating = false }) =>
   const {
     activeMediaId,
     setActiveMediaId,
+    setActiveView,
+    queueBoardMedia,
+    openMediaInEditor,
     openMediaInPlayer,
     refreshActiveMedia,
     closeLibraryPalette,
@@ -99,7 +102,23 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ floating = false }) =>
     event.dataTransfer.effectAllowed = "copy";
     event.dataTransfer.setData("application/jkc-media-id", item.id);
     event.dataTransfer.setData("application/jkc-media-ids", JSON.stringify(ids));
-    event.dataTransfer.setData("text/plain", item.name);
+    event.dataTransfer.setData("text/plain", `jkc-media:${JSON.stringify(ids)}`);
+  };
+  const selectedMediaIds = () => {
+    const ids = selectedIds.length > 0 ? selectedIds : (activeMediaId ? [activeMediaId] : []);
+    return ids.length > 0 ? ids : mediaItems.slice(0, 1).map((item) => item.id);
+  };
+
+  const sendSelectionToBoard = () => {
+    const ids = selectedMediaIds();
+    if (ids.length === 0) return;
+    queueBoardMedia(ids);
+    setActiveView("boards");
+  };
+
+  const openSelectionInEditor = () => {
+    const item = mediaItems.find((candidate) => candidate.id === selectedMediaIds()[0]);
+    if (item?.kind === "image") openMediaInEditor(item.id);
   };
 
   // Load roots and all tags
@@ -114,7 +133,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ floating = false }) =>
   }, []);
 
   useEffect(() => {
-    loadRootsAndTags();
+    void loadRootsAndTags();
   }, [loadRootsAndTags]);
 
   // Load media items matching active filters
@@ -140,7 +159,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ floating = false }) =>
   }, [selectedRootId, searchQuery, kindFilter, favoriteOnly, selectedTag, page]);
 
   useEffect(() => {
-    loadMedia();
+    void loadMedia();
   }, [loadMedia]);
 
   const handleAddFolder = async () => {
@@ -493,7 +512,13 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ floating = false }) =>
             <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--text-secondary)" }}>
               <strong>{selectedIds.length} selected</strong>
               <span>Ctrl/Cmd-click to add, Shift-click for a range, drag to another workspace.</span>
-              <button type="button" className="btn" onClick={() => setSelectedIds([])} style={{ padding: "3px 8px", marginLeft: "auto" }}>
+              <button type="button" className="btn btn-primary" onClick={sendSelectionToBoard} style={{ padding: "3px 8px", marginLeft: "auto" }}>
+                Board
+              </button>
+              <button type="button" className="btn" onClick={openSelectionInEditor} style={{ padding: "3px 8px" }}>
+                Edit
+              </button>
+              <button type="button" className="btn" onClick={() => setSelectedIds([])} style={{ padding: "3px 8px" }}>
                 Clear
               </button>
             </div>
@@ -786,8 +811,30 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ floating = false }) =>
 
 // Thumbnail with fallback to neutral media-type placeholder
 const ThumbnailImage: React.FC<{ item: MediaItem }> = ({ item }) => {
+  const imageRef = useRef<HTMLImageElement | null>(null);
+  const [shouldLoad, setShouldLoad] = useState(false);
   const [hasError, setHasError] = useState(false);
   const [isLoaded, setIsLoaded] = useState(false);
+
+  useEffect(() => {
+    const image = imageRef.current;
+    if (!image || shouldLoad) return;
+    if (!("IntersectionObserver" in window)) {
+      setShouldLoad(true);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setShouldLoad(true);
+          observer.disconnect();
+        }
+      },
+      { rootMargin: "240px" },
+    );
+    observer.observe(image);
+    return () => observer.disconnect();
+  }, [shouldLoad]);
 
   return (
     <>
@@ -807,8 +854,11 @@ const ThumbnailImage: React.FC<{ item: MediaItem }> = ({ item }) => {
       )}
       {!hasError && (
         <img
-          src={getThumbnailUrl(item.id)}
+          ref={imageRef}
+          src={shouldLoad ? getThumbnailUrl(item.id) : undefined}
           alt={item.name}
+          loading="lazy"
+          decoding="async"
           onLoad={() => setIsLoaded(true)}
           onError={() => setHasError(true)}
           style={{

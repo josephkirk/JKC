@@ -788,7 +788,20 @@ impl Database {
             let name: String = r.get(1)?;
             let doc_str: String = r.get(2)?;
             let item_count = if let Ok(val) = serde_json::from_str::<serde_json::Value>(&doc_str) {
-                val.get("items").and_then(|i| i.as_array()).map(|a| a.len() as i64).unwrap_or(0)
+                if let Some(elements) = val.get("excalidrawScene").and_then(|scene| scene.get("elements")).and_then(|elements| elements.as_array()) {
+                    let mut ids = std::collections::HashSet::new();
+                    let mut untagged_count = 0_i64;
+                    for element in elements.iter().filter(|element| !element.get("isDeleted").and_then(|deleted| deleted.as_bool()).unwrap_or(false)) {
+                        if let Some(id) = element.get("customData").and_then(|data| data.get("jkcItemId")).and_then(|id| id.as_str()) {
+                            ids.insert(id.to_string());
+                        } else {
+                            untagged_count += 1;
+                        }
+                    }
+                    ids.len() as i64 + untagged_count
+                } else {
+                    val.get("items").and_then(|i| i.as_array()).map(|a| a.len() as i64).unwrap_or(0)
+                }
             } else {
                 0
             };

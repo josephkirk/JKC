@@ -1,17 +1,22 @@
-import React, { useEffect } from "react";
+import React, { lazy, Suspense, useEffect } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { AppProvider, useApp } from "./context/AppContext.tsx";
+import { api } from "./lib/api.ts";
 import { Sidebar } from "./components/Sidebar.tsx";
 import { Header } from "./components/Header.tsx";
 import { Inspector } from "./components/Inspector.tsx";
 import { SettingsView } from "./features/settings/SettingsView.tsx";
 import { LibraryView } from "./features/library/LibraryView.tsx";
 import { PlayerView } from "./features/player/PlayerView.tsx";
-import { BoardView } from "./features/boards/BoardView.tsx";
 import { ImageEditorView } from "./features/editor/ImageEditorView.tsx";
 
+const ExcalidrawBoardView = lazy(() => import("./features/boards/ExcalidrawBoardView.tsx").then((module) => ({ default: module.ExcalidrawBoardView })));
+
 const WorkspaceRenderer: React.FC = () => {
-  const { activeView } = useApp();
+  const { activeView, settingsReady } = useApp();
+  if (!settingsReady) {
+    return <div className="empty-state"><div className="empty-state-title">Starting JKC…</div></div>;
+  }
 
   switch (activeView) {
     case "library":
@@ -19,7 +24,11 @@ const WorkspaceRenderer: React.FC = () => {
     case "player":
       return <PlayerView />;
     case "boards":
-      return <BoardView />;
+      return (
+        <Suspense fallback={<div className="empty-state"><div className="empty-state-title">Loading canvas…</div></div>}>
+          <ExcalidrawBoardView />
+        </Suspense>
+      );
     case "editor":
       return <ImageEditorView />;
     case "settings":
@@ -49,7 +58,7 @@ const MainLayout: React.FC = () => {
             try {
               await flushPendingSave();
               allowCloseRef.current = true;
-              await window.close();
+              await api.exitApp();
             } catch (e) {
               console.error("Window close prevented due to save error:", e);
               closeAttemptRef.current = null;

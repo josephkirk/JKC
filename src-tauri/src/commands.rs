@@ -47,6 +47,12 @@ impl Default for AppSettings {
     }
 }
 
+#[tauri::command]
+pub fn exit_app(app: AppHandle) -> Result<(), AppError> {
+    app.exit(0);
+    Ok(())
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ScanSummary {
@@ -131,6 +137,8 @@ pub struct BoardDocument {
     pub name: String,
     pub viewport: BoardViewport,
     pub items: Vec<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub excalidraw_scene: Option<serde_json::Value>,
 }
 
 // Editor structs
@@ -182,7 +190,7 @@ pub struct EditorExportRequest {
     pub quality: Option<f32>,
 }
 
-const SUPPORTED_IMAGE_EXTS: &[&str] = &["jpg", "jpeg", "png", "webp", "bmp", "gif"];
+const SUPPORTED_IMAGE_EXTS: &[&str] = &["jpg", "jpeg", "png", "webp", "bmp", "gif", "jp2", "j2k", "jpf", "jpx", "pdf"];
 const SUPPORTED_VIDEO_EXTS: &[&str] = &["mp4", "mov", "mkv", "webm", "avi", "m4v"];
 const MAX_EDITOR_PIXELS: i64 = 16_777_216; // 4096 * 4096 or equivalent
 pub const ASSET_ORIGIN: &str = "http://jkc-asset.localhost";
@@ -744,6 +752,7 @@ pub fn create_board(
             scale: 1.0,
         },
         items: Vec::new(),
+        excalidraw_scene: None,
     };
     let json_str = serde_json::to_string(&board)?;
     state.db.save_board(&id, &name, &json_str)?;

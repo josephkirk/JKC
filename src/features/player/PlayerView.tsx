@@ -30,6 +30,7 @@ import { Stage, Layer, Line as KonvaLine, Rect as KonvaRect, Text as KonvaText }
 import type { KonvaEventObject } from "konva/lib/Node";
 import { useApp } from "../../context/AppContext.tsx";
 import { api, getMediaAssetUrl, getProxyAssetUrl } from "../../lib/api.ts";
+import { getDocument } from "pdfjs-dist";
 import { QueuedDocumentWriter } from "../../lib/queuedWriter.ts";
 import type {
   ReviewAnnotation,
@@ -211,6 +212,44 @@ function reviewReducer(state: ReviewState, action: ReviewAction): ReviewState {
       return state;
   }
 }
+const PdfPages: React.FC<{ url: string; name: string }> = ({ url, name }) => {
+  const [pages, setPages] = useState<string[]>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setPages([]);
+    setError(null);
+    void getDocument({ url } as any).promise.then(async (pdf) => {
+      const rendered: string[] = [];
+      for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+        if (cancelled) return;
+        const page = await pdf.getPage(pageNumber);
+        const viewport = page.getViewport({ scale: 1.5 });
+        const canvas = window.document.createElement("canvas");
+        canvas.width = Math.ceil(viewport.width);
+        canvas.height = Math.ceil(viewport.height);
+        const context = canvas.getContext("2d");
+        if (!context) throw new Error("Could not create PDF page canvas");
+        await page.render({ canvasContext: context, canvas, viewport }).promise;
+        rendered.push(canvas.toDataURL("image/png"));
+      }
+      if (!cancelled) setPages(rendered);
+    }).catch((cause) => {
+      if (!cancelled) setError(cause instanceof Error ? cause.message : "Failed to render PDF");
+    });
+    return () => { cancelled = true; };
+  }, [url]);
+
+  if (error) return <div className="empty-state"><div className="empty-state-title">PDF preview failed</div><div className="empty-state-desc">{error}</div></div>;
+  if (pages.length === 0) return <div className="empty-state"><div className="empty-state-title">Loading PDF pages…</div></div>;
+  return (
+    <div style={{ width: "100%", height: "100%", overflow: "auto", display: "grid", gap: 16, justifyItems: "center", padding: 16 }}>
+      {pages.map((page, index) => <img key={`${name}-${index}`} src={page} alt={`${name}, page ${index + 1}`} style={{ maxWidth: "100%", boxShadow: "0 2px 12px rgba(0,0,0,.45)" }} />)}
+    </div>
+  );
+};
+
 
 export const PlayerView: React.FC = () => {
   const {
@@ -698,12 +737,23 @@ export const PlayerView: React.FC = () => {
   };
   const handleLibraryDrop = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
-    const mediaId = e.dataTransfer.getData("application/jkc-media-id");
+    let mediaId = e.dataTransfer.getData("application/jkc-media-id");
+    if (!mediaId) {
+      const plain = e.dataTransfer.getData("text/plain");
+      if (plain.startsWith("jkc-media:")) {
+        try {
+          const parsed = JSON.parse(plain.slice("jkc-media:".length));
+          if (Array.isArray(parsed) && typeof parsed[0] === "string") mediaId = parsed[0];
+        } catch {
+          // Ignore unrelated text drops.
+        }
+      }
+    }
     if (mediaId) openMediaInPlayer(mediaId);
   };
 
   const handleLibraryDragOver = (e: React.DragEvent<HTMLDivElement>) => {
-    if (e.dataTransfer.types.includes("application/jkc-media-id")) e.preventDefault();
+    e.preventDefault();
   };
   if (!activeMedia) {
     return (
@@ -721,7 +771,8 @@ export const PlayerView: React.FC = () => {
     );
   }
 
-  const isImage = activeMedia.kind === "image";
+  const isPdf = /\.pdf$/i.test(activeMedia.name);
+  const isImage = activeMedia.kind === "image" && !isPdf;
   const mediaUrl = useProxy ? getProxyAssetUrl(activeMedia.id) : getMediaAssetUrl(activeMedia.id);
 
   return (
@@ -741,7 +792,7 @@ export const PlayerView: React.FC = () => {
           }}
         >
           {/* Image Display Mode */}
-          {isImage ? (
+          {isPdf ? <PdfPages url={getMediaAssetUrl(activeMedia.id)} name={activeMedia.name} /> : isImage ? (
             <div
               style={{
                 width: "100%",
@@ -915,7 +966,7 @@ export const PlayerView: React.FC = () => {
         </div>
 
         {/* Video Scrubber & Playback Controls Toolbar */}
-        {!isImage && (
+        {!isImage && !isPdf && (
           <div
             style={{
               background: "var(--bg-secondary)",

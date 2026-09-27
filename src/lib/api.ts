@@ -54,6 +54,7 @@ async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> 
 }
 
 export const api = {
+  exitApp: () => call<void>("exit_app"),
   // System & Settings
   getSystemInfo: () => call<SystemInfo>("get_system_info"),
   getSettings: () => call<AppSettings>("get_settings"),

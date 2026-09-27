@@ -1,17 +1,24 @@
-import React from "react";
+import React, { useEffect } from "react";
 import { Folder, AlertTriangle, CheckCircle, RefreshCw, Cpu, Database, Info } from "lucide-react";
 import { useApp } from "../../context/AppContext.tsx";
 import { api } from "../../lib/api.ts";
 
 export const SettingsView: React.FC = () => {
-  const { systemInfo, refreshSystemInfo, settings } = useApp();
+  const { systemInfo, systemInfoStatus, systemInfoError, refreshSystemInfo, settings } = useApp();
+
+  useEffect(() => {
+    if (systemInfoStatus === "idle") {
+      void refreshSystemInfo();
+    }
+  }, [systemInfoStatus, refreshSystemInfo]);
+  const isChecking = systemInfoStatus === "idle" || systemInfoStatus === "loading";
 
   const handlePickToolsDir = async () => {
     const selected = await api.pickFolder();
     if (selected) {
       try {
-        await api.setToolsDir(selected);
-        await refreshSystemInfo();
+        const info = await api.setToolsDir(selected);
+        await refreshSystemInfo(info);
       } catch (err) {
         console.error("Failed to set tools directory:", err);
       }
@@ -20,8 +27,8 @@ export const SettingsView: React.FC = () => {
 
   const handleClearToolsDir = async () => {
     try {
-      await api.setToolsDir("");
-      await refreshSystemInfo();
+      const info = await api.setToolsDir("");
+      await refreshSystemInfo(info);
     } catch (err) {
       console.error("Failed to clear tools directory:", err);
     }
@@ -33,6 +40,11 @@ export const SettingsView: React.FC = () => {
       <p style={{ color: "var(--text-secondary)", fontSize: 13, marginBottom: 24 }}>
         Configure local FFmpeg / FFprobe binaries, storage directories, and system prerequisites.
       </p>
+      {systemInfoStatus === "error" && (
+        <div style={{ color: "var(--danger)", fontSize: 12, marginBottom: 16 }}>
+          Detection refresh failed: {systemInfoError || "Unknown error"}. Showing the previous result; use Refresh Detection to retry.
+        </div>
+      )}
 
       {/* FFmpeg / FFprobe Toolchain Card */}
       <div
@@ -49,8 +61,8 @@ export const SettingsView: React.FC = () => {
             <Cpu size={18} color="var(--accent)" />
             <h3 style={{ fontSize: 14, fontWeight: 600 }}>FFmpeg &amp; FFprobe Engine</h3>
           </div>
-          <button type="button" className="btn" onClick={() => refreshSystemInfo()}>
-            <RefreshCw size={13} /> Refresh Detection
+          <button type="button" className="btn" onClick={() => void refreshSystemInfo()} disabled={systemInfoStatus === "loading"}>
+            <RefreshCw size={13} className={systemInfoStatus === "loading" ? "spin" : undefined} /> {systemInfoStatus === "loading" ? "Checking…" : "Refresh Detection"}
           </button>
         </div>
 
@@ -60,12 +72,14 @@ export const SettingsView: React.FC = () => {
             style={{
               padding: 12,
               borderRadius: 6,
-              background: systemInfo?.ffmpegAvailable ? "var(--bg-tertiary)" : "var(--danger-subtle)",
-              border: `1px solid ${systemInfo?.ffmpegAvailable ? "var(--border-color)" : "var(--danger)"}`,
+              background: isChecking ? "var(--bg-tertiary)" : systemInfo?.ffmpegAvailable ? "var(--bg-tertiary)" : "var(--danger-subtle)",
+              border: `1px solid ${isChecking ? "var(--border-color)" : systemInfo?.ffmpegAvailable ? "var(--border-color)" : "var(--danger)"}`,
             }}
           >
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-              {systemInfo?.ffmpegAvailable ? (
+              {isChecking ? (
+                <RefreshCw size={16} color="var(--text-muted)" />
+              ) : systemInfo?.ffmpegAvailable ? (
                 <CheckCircle size={16} color="var(--success)" />
               ) : (
                 <AlertTriangle size={16} color="var(--danger)" />
@@ -76,11 +90,11 @@ export const SettingsView: React.FC = () => {
                   fontSize: 11,
                   padding: "2px 6px",
                   borderRadius: 4,
-                  background: systemInfo?.ffmpegAvailable ? "rgba(16, 185, 129, 0.2)" : "rgba(239, 68, 68, 0.2)",
-                  color: systemInfo?.ffmpegAvailable ? "var(--success)" : "var(--danger)",
+                  background: isChecking ? "var(--bg-tertiary)" : systemInfo?.ffmpegAvailable ? "rgba(16, 185, 129, 0.2)" : "rgba(239, 68, 68, 0.2)",
+                  color: isChecking ? "var(--text-muted)" : systemInfo?.ffmpegAvailable ? "var(--success)" : "var(--danger)",
                 }}
               >
-                {systemInfo?.ffmpegAvailable ? "Available" : "Not Found"}
+                {isChecking ? "Checking…" : systemInfo?.ffmpegAvailable ? "Available" : "Not Found"}
               </span>
             </div>
             <div style={{ fontSize: 12, color: "var(--text-secondary)", marginLeft: 24 }}>
@@ -106,12 +120,14 @@ export const SettingsView: React.FC = () => {
             style={{
               padding: 12,
               borderRadius: 6,
-              background: systemInfo?.ffprobeAvailable ? "var(--bg-tertiary)" : "var(--danger-subtle)",
-              border: `1px solid ${systemInfo?.ffprobeAvailable ? "var(--border-color)" : "var(--danger)"}`,
+              background: isChecking ? "var(--bg-tertiary)" : systemInfo?.ffprobeAvailable ? "var(--bg-tertiary)" : "var(--danger-subtle)",
+              border: `1px solid ${isChecking ? "var(--border-color)" : systemInfo?.ffprobeAvailable ? "var(--border-color)" : "var(--danger)"}`,
             }}
           >
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-              {systemInfo?.ffprobeAvailable ? (
+              {isChecking ? (
+                <RefreshCw size={16} color="var(--text-muted)" />
+              ) : systemInfo?.ffprobeAvailable ? (
                 <CheckCircle size={16} color="var(--success)" />
               ) : (
                 <AlertTriangle size={16} color="var(--danger)" />
@@ -122,11 +138,11 @@ export const SettingsView: React.FC = () => {
                   fontSize: 11,
                   padding: "2px 6px",
                   borderRadius: 4,
-                  background: systemInfo?.ffprobeAvailable ? "rgba(16, 185, 129, 0.2)" : "rgba(239, 68, 68, 0.2)",
-                  color: systemInfo?.ffprobeAvailable ? "var(--success)" : "var(--danger)",
+                  background: isChecking ? "var(--bg-tertiary)" : systemInfo?.ffprobeAvailable ? "rgba(16, 185, 129, 0.2)" : "rgba(239, 68, 68, 0.2)",
+                  color: isChecking ? "var(--text-muted)" : systemInfo?.ffprobeAvailable ? "var(--success)" : "var(--danger)",
                 }}
               >
-                {systemInfo?.ffprobeAvailable ? "Available" : "Not Found"}
+                {isChecking ? "Checking…" : systemInfo?.ffprobeAvailable ? "Available" : "Not Found"}
               </span>
             </div>
             <div style={{ fontSize: 12, color: "var(--text-secondary)", marginLeft: 24 }}>

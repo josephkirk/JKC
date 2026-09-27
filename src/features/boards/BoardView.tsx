@@ -278,15 +278,18 @@ export const BoardView: React.FC = () => {
     setSaveErrorMessage,
     registerSaveFlusher,
     openMediaInPlayer,
+    pendingBoardMediaIds,
+    clearPendingBoardMedia,
   } = useApp();
-
   const [boards, setBoards] = useState<BoardSummary[]>([]);
   const [boardState, dispatch] = useReducer(boardReducer, initialBoardState);
   const [hydratedBoardId, setHydratedBoardId] = useState<string | null>(null);
   const loadSeqRef = useRef(0);
+  const applyingPendingMediaRef = useRef(false);
 
   // Selected item IDs
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [isLibraryDragOver, setIsLibraryDragOver] = useState(false);
   const [activeTool, setActiveTool] = useState<"select" | "draw" | "note" | "text">("select");
   const [activeDrawingColor, setActiveDrawingColor] = useState("#3b82f6");
 
@@ -389,6 +392,57 @@ export const BoardView: React.FC = () => {
         console.error("Failed to load board:", err);
       });
   }, [activeBoardId, setSaveStatus]);
+  useEffect(() => {
+    if (!boardState.doc || !hydratedBoardId || pendingBoardMediaIds.length === 0 || applyingPendingMediaRef.current) {
+      return;
+    }
+    applyingPendingMediaRef.current = true;
+    const applyPendingMedia = async () => {
+      try {
+        const mediaItems = await Promise.all(pendingBoardMediaIds.map((id) => api.getMedia(id)));
+        const view = boardState.doc!.viewport;
+        const centerX = (stageDimensions.width / 2 - view.x) / view.scale;
+        const centerY = (stageDimensions.height / 2 - view.y) / view.scale;
+        const maxZ = boardState.doc!.items.reduce((acc, cur) => Math.max(acc, cur.zIndex), 0);
+        const newItems: BoardMediaItem[] = mediaItems.map((media, index) => {
+          const aspect = media.width && media.height ? media.width / media.height : 1.77;
+          const width = 320;
+          const height = Math.round(width / aspect);
+          return {
+            id: crypto.randomUUID(),
+            type: media.kind,
+            mediaId: media.id,
+            x: centerX - width / 2 + index * 30,
+            y: centerY - height / 2 + index * 30,
+            width,
+            height,
+            rotation: 0,
+            zIndex: maxZ + index + 1,
+          };
+        });
+        newItems.forEach((item) => dispatch({ type: "ADD_ITEM", item }));
+        setMediaMap((previous) => {
+          const next = new Map(previous);
+          mediaItems.forEach((media) => next.set(media.id, media));
+          return next;
+        });
+        setSelectedIds(newItems.map((item) => item.id));
+        clearPendingBoardMedia();
+      } catch (err) {
+        console.error("Failed to add queued library media to board:", err);
+      } finally {
+        applyingPendingMediaRef.current = false;
+      }
+    };
+    void applyPendingMedia();
+  }, [
+    boardState.doc,
+    hydratedBoardId,
+    pendingBoardMediaIds,
+    stageDimensions,
+    clearPendingBoardMedia,
+  ]);
+
 
   // Auto-save Board Document when dirty
   const writerRef = useRef<QueuedDocumentWriter<BoardDocument> | null>(null);
@@ -683,10 +737,19 @@ export const BoardView: React.FC = () => {
   // Handle Drag & Drop Media onto Canvas
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+    setIsLibraryDragOver(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+      setIsLibraryDragOver(false);
+    }
   };
 
   const handleDrop = async (e: React.DragEvent) => {
     e.preventDefault();
+    setIsLibraryDragOver(false);
     if (!boardState.doc) return;
 
     const rect = containerRef.current?.getBoundingClientRect();
@@ -706,6 +769,17 @@ export const BoardView: React.FC = () => {
       if (Array.isArray(parsed)) droppedIds = parsed.filter((id): id is string => typeof id === "string");
     } catch {
       droppedIds = [];
+    }
+    if (droppedIds.length === 0) {
+      const plain = e.dataTransfer.getData("text/plain");
+      if (plain.startsWith("jkc-media:")) {
+        try {
+          const parsed = JSON.parse(plain.slice("jkc-media:".length));
+          if (Array.isArray(parsed)) droppedIds = parsed.filter((id): id is string => typeof id === "string");
+        } catch {
+          droppedIds = [];
+        }
+      }
     }
     if (primaryId && !droppedIds.includes(primaryId)) droppedIds.unshift(primaryId);
     if (droppedIds.length === 0) return;
@@ -986,7 +1060,9 @@ export const BoardView: React.FC = () => {
       {/* Main Canvas Area */}
       <div
         ref={containerRef}
+        onDragEnter={handleDragOver}
         onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
         onDrop={handleDrop}
         style={{
           flex: 1,
@@ -1099,6 +1175,34 @@ export const BoardView: React.FC = () => {
             />
           </Layer>
         </Stage>
+        {isLibraryDragOver && (
+          <div
+            onDragOver={(e) => {
+              e.preventDefault();
+              e.dataTransfer.dropEffect = "copy";
+            }}
+            onDrop={(e) => {
+              e.stopPropagation();
+              void handleDrop(e);
+            }}
+            style={{
+              position: "absolute",
+              inset: 0,
+              zIndex: 40,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              border: "2px dashed var(--accent)",
+              background: "rgba(59, 130, 246, 0.12)",
+              color: "var(--text-primary)",
+              fontSize: 16,
+              fontWeight: 600,
+              pointerEvents: "auto",
+            }}
+          >
+            Drop media onto board
+          </div>
+        )}
 
         {/* Aligned HTML Overlay for Double-Clicked Active Video Tile */}
         {activeVideoId && (() => {
