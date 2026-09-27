@@ -1160,19 +1160,27 @@ export const BoardView: React.FC = () => {
             )}
 
             {/* Transformer for selected items */}
-            <Transformer
-              ref={transformerRef}
-              boundBoxFunc={(oldBox: Box, newBox: Box) => {
-                if (newBox.width < 20 || newBox.height < 20) {
-                  return oldBox;
-                }
-                return newBox;
-              }}
-              rotateEnabled={true}
-              anchorFill="#3b82f6"
-              anchorStroke="#ffffff"
-              borderStroke="#3b82f6"
-            />
+            {(() => {
+              const selectedItems = (boardState.doc?.items ?? []).filter((item) => selectedIds.includes(item.id));
+              const isMediaOnly = selectedItems.length > 0 && selectedItems.every((item) => item.type === "image" || item.type === "video");
+              return (
+                <Transformer
+                  ref={transformerRef}
+                  keepRatio={isMediaOnly}
+                  enabledAnchors={isMediaOnly ? ["top-left", "top-right", "bottom-left", "bottom-right"] : undefined}
+                  boundBoxFunc={(oldBox: Box, newBox: Box) => {
+                    if (newBox.width < 20 || newBox.height < 20) {
+                      return oldBox;
+                    }
+                    return newBox;
+                  }}
+                  rotateEnabled={true}
+                  anchorFill="#3b82f6"
+                  anchorStroke="#ffffff"
+                  borderStroke="#3b82f6"
+                />
+              );
+            })()}
           </Layer>
         </Stage>
         {isLibraryDragOver && (
