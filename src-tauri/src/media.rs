@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 fn configure_hidden_command(command: &mut Command) {
     command.stdin(Stdio::null());
     #[cfg(windows)]
-    command.creation_flags(0x08000000);
+    command.creation_flags(0x08000000 | 0x00000200);
 }
 
 use std::sync::Arc;
@@ -196,6 +196,29 @@ impl MediaProcessor {
             for dir in std::env::split_paths(&path_var) {
                 let candidate = dir.join(&exe_name);
                 if candidate.exists() {
+                    // On Windows, if this is a Scoop shim (has an adjacent .shim file),
+                    // resolve to the real underlying binary so CREATE_NO_WINDOW is not
+                    // bypassed by the shim process spawning a new console window.
+                    #[cfg(windows)]
+                    {
+                        let shim_file = candidate.with_extension("shim");
+                        if shim_file.exists() {
+                            if let Ok(content) = std::fs::read_to_string(&shim_file) {
+                                for line in content.lines() {
+                                    let trimmed = line.trim();
+                                    if trimmed.starts_with("path =") {
+                                        if let Some(target) = trimmed.split('=').nth(1) {
+                                            let clean_target = target.trim().trim_matches('"');
+                                            let real_path = PathBuf::from(clean_target);
+                                            if real_path.exists() {
+                                                return Some(real_path);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                     return Some(candidate);
                 }
             }

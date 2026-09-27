@@ -528,8 +528,14 @@ fn scan_root_internal(
             if let Ok((w, h, dur)) = state.media.probe_media(file_path, kind) {
                 let _ = state.db.update_media_metadata(&item.id, w, h, dur);
             }
-            // Generate thumbnail in background cache
-            let _ = state.media.get_or_generate_thumbnail(&item.id, file_path, kind, size_bytes, modified_ms);
+            // Generate thumbnail in background task to avoid slowing down folder scans
+            let media_proc = state.media.clone();
+            let item_id = item.id.clone();
+            let fp = file_path.to_path_buf();
+            let k = kind.to_string();
+            tauri::async_runtime::spawn_blocking(move || {
+                let _ = media_proc.get_or_generate_thumbnail(&item_id, &fp, &k, size_bytes, modified_ms);
+            });
         }
     }
 
