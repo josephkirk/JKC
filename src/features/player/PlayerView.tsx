@@ -25,6 +25,7 @@ import {
   Loader2,
   Sparkles,
   Film,
+  X,
 } from "lucide-react";
 import { Stage, Layer, Line as KonvaLine, Rect as KonvaRect, Text as KonvaText } from "react-konva";
 import type { KonvaEventObject } from "konva/lib/Node";
@@ -251,9 +252,14 @@ const PdfPages: React.FC<{ url: string; name: string }> = ({ url, name }) => {
 };
 
 
-export const PlayerView: React.FC = () => {
+export interface PlayerViewProps {
+  floating?: boolean;
+}
+
+export const PlayerView: React.FC<PlayerViewProps> = ({ floating = false }) => {
   const {
     activeMedia,
+    closePlayerPalette,
     openMediaInPlayer,
     setSaveStatus,
     setSaveErrorMessage,
@@ -265,6 +271,34 @@ export const PlayerView: React.FC = () => {
   const loadSeqRef = useRef(0);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const [dialogPos, setDialogPos] = useState({ x: 160, y: 80 });
+  const dragRef = useRef<{ x: number; y: number; left: number; top: number } | null>(null);
+
+  useEffect(() => {
+    const handlePointerMove = (event: PointerEvent) => {
+      if (!dragRef.current) return;
+      setDialogPos({
+        x: Math.max(12, dragRef.current.left + event.clientX - dragRef.current.x),
+        y: Math.max(12, dragRef.current.top + event.clientY - dragRef.current.y),
+      });
+    };
+
+    const handlePointerUp = () => {
+      dragRef.current = null;
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+    };
+  }, []);
+
+  const beginDialogDrag = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!floating || (event.target as HTMLElement).closest("button")) return;
+    dragRef.current = { x: event.clientX, y: event.clientY, left: dialogPos.x, top: dialogPos.y };
+  };
 
   // Video State
   const [isPlaying, setIsPlaying] = useState(false);
@@ -780,8 +814,21 @@ export const PlayerView: React.FC = () => {
   const mediaUrl = useProxy ? getProxyAssetUrl(activeMedia.id) : originalMediaUrl;
 
   return (
-    <div style={{ display: "flex", flex: 1, height: "100%", overflow: "hidden" }}>
-      {/* Center Player / Preview Area */}
+    <div
+      className={floating ? "player-palette" : undefined}
+      style={floating ? { left: dialogPos.x, top: dialogPos.y } : { display: "flex", flex: 1, height: "100%", overflow: "hidden" }}
+    >
+      {floating && (
+        <div className="player-palette-header" onPointerDown={beginDialogDrag}>
+          <Film size={15} />
+          <strong>Player &amp; Review</strong>
+          <span>{activeMedia.name}</span>
+          <button type="button" className="btn btn-icon" onClick={closePlayerPalette} title="Close Player">
+            <X size={15} />
+          </button>
+        </div>
+      )}
+      <div style={{ display: "flex", flex: 1, height: floating ? "calc(100% - 42px)" : "100%", overflow: "hidden" }}>
       <div style={{ flex: 1, display: "flex", flexDirection: "column", height: "100%", overflow: "hidden", background: "#050608" }}>
         {/* Main Canvas / Video Container */}
         <div
@@ -1611,6 +1658,7 @@ export const PlayerView: React.FC = () => {
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 };

@@ -1,5 +1,5 @@
 import React from "react";
-import { Check, Loader2, AlertCircle, PanelRightClose, PanelRightOpen, RefreshCw, FolderSearch } from "lucide-react";
+import { Check, Loader2, AlertCircle, PanelRightClose, PanelRightOpen, RefreshCw, FolderSearch, Film } from "lucide-react";
 import { useApp } from "../context/AppContext.tsx";
 
 export const Header: React.FC = () => {
@@ -9,6 +9,8 @@ export const Header: React.FC = () => {
     inspectorOpen,
     toggleInspector,
     toggleLibraryPalette,
+    togglePlayerPalette,
+    playerPaletteOpen,
     saveStatus,
     saveErrorMessage,
     flushPendingSave,
@@ -74,6 +76,14 @@ export const Header: React.FC = () => {
           <FolderSearch size={15} /> Library
         </button>
 
+        <button
+          type="button"
+          className={`btn ${playerPaletteOpen ? "active" : ""}`}
+          onClick={togglePlayerPalette}
+          title="Open draggable Player & Review palette"
+        >
+          <Film size={15} /> Player
+        </button>
         <button
           type="button"
           className="btn btn-icon"

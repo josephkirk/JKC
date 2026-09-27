@@ -25,6 +25,10 @@ interface AppContextValue {
   openLibraryPalette: () => void;
   closeLibraryPalette: () => void;
   toggleLibraryPalette: () => void;
+  playerPaletteOpen: boolean;
+  openPlayerPalette: (mediaId?: string) => void;
+  closePlayerPalette: () => void;
+  togglePlayerPalette: () => void;
   inspectorOpen: boolean;
   setInspectorOpen: (open: boolean) => void;
   toggleInspector: () => void;
@@ -57,6 +61,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [pendingBoardMediaIds, setPendingBoardMediaIds] = useState<string[]>([]);
   const [settingsReady, setSettingsReady] = useState(false);
   const [libraryPaletteOpen, setLibraryPaletteOpen] = useState(false);
+  const [playerPaletteOpen, setPlayerPaletteOpen] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(true);
   const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null);
   const [systemInfoStatus, setSystemInfoStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
@@ -201,6 +206,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const openLibraryPalette = useCallback(() => setLibraryPaletteOpen(true), []);
   const closeLibraryPalette = useCallback(() => setLibraryPaletteOpen(false), []);
   const toggleLibraryPalette = useCallback(() => setLibraryPaletteOpen((open) => !open), []);
+  const openPlayerPalette = useCallback((mediaId?: string) => {
+    if (mediaId) setActiveMediaId(mediaId);
+    setPlayerPaletteOpen(true);
+  }, []);
+  const closePlayerPalette = useCallback(() => setPlayerPaletteOpen(false), []);
+  const togglePlayerPalette = useCallback(() => setPlayerPaletteOpen((open) => !open), []);
 
   const toggleInspector = useCallback(() => {
     setInspectorOpen((prev) => !prev);
@@ -290,6 +301,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         openLibraryPalette,
         closeLibraryPalette,
         toggleLibraryPalette,
+        playerPaletteOpen,
+        openPlayerPalette,
+        closePlayerPalette,
+        togglePlayerPalette,
         inspectorOpen,
         setInspectorOpen,
         toggleInspector,

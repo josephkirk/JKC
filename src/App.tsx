@@ -39,7 +39,7 @@ const WorkspaceRenderer: React.FC = () => {
 };
 
 const MainLayout: React.FC = () => {
-  const { flushPendingSave, libraryPaletteOpen } = useApp();
+  const { flushPendingSave, libraryPaletteOpen, playerPaletteOpen } = useApp();
   const closeAttemptRef = React.useRef<Promise<void> | null>(null);
   const allowCloseRef = React.useRef(false);
 
@@ -86,6 +86,7 @@ const MainLayout: React.FC = () => {
           <Inspector />
         </div>
         {libraryPaletteOpen && <LibraryView floating />}
+        {playerPaletteOpen && <PlayerView floating />}
       </div>
     </div>
   );

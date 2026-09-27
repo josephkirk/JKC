@@ -397,7 +397,7 @@ impl MediaProcessor {
         let mut cmd = Command::new(&ffmpeg);
         cmd.args(["-y", "-ss", "00:00:01", "-i"])
             .arg(path)
-            .args(["-vframes", "1", "-vf", "scale=w='min(400,iw)':h=-1", "-q:v", "3"])
+            .args(["-vframes", "1", "-vf", "scale=w='min(400,iw)':h=-1", "-q:v", "3", "-update", "1"])
             .arg(&temp_thumb);
         configure_hidden_command(&mut cmd);
         let res = cmd.output();
@@ -411,7 +411,7 @@ impl MediaProcessor {
             retry_cmd
                 .args(["-y", "-ss", "00:00:00", "-i"])
                 .arg(path)
-                .args(["-vframes", "1", "-vf", "scale=w='min(400,iw)':h=-1", "-q:v", "3"])
+                .args(["-vframes", "1", "-vf", "scale=w='min(400,iw)':h=-1", "-q:v", "3", "-update", "1"])
                 .arg(&temp_thumb);
             configure_hidden_command(&mut retry_cmd);
 
@@ -462,7 +462,7 @@ impl MediaProcessor {
         command
             .args(["-y", "-i"])
             .arg(path)
-            .args(["-map", "0:v:0", "-frames:v", "1"])
+            .args(["-map", "0:v:0", "-frames:v", "1", "-update", "1"])
             .arg(&temp_preview);
         configure_hidden_command(&mut command);
         let output = command.output().map_err(|error| {
